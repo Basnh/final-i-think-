@@ -343,6 +343,8 @@ class SecurityAgentClient:
                 self.icmp_echo_initial_state = self.get_icmp_echo_current_state()
                 self.logger.info(f"Saved ICMP Echo initial state: enabled={self.icmp_echo_initial_state[0]}, disabled={self.icmp_echo_initial_state[1]}")
             
+            server_port = self.server_url.split(':')[-1] if ':' in self.server_url.split('//')[-1] else '5000'
+
             if not server_ip:
                 server_host = self.server_url.split('//')[-1].split(':')[0]
                 try:
@@ -369,15 +371,18 @@ class SecurityAgentClient:
             # 3.5. Disable ONLY the 4 File and Printer Sharing Echo Request inbound rules.
             self.set_file_printer_echo_rules(enable=False)
 
-            # 4. CREATE EXPLICIT ALLOW rule for Management Server - inbound only signal path.
+            # 4. CREATE EXPLICIT ALLOW rules for Management Server.
             self.logger.info("Creating ALLOW rules using PowerShell...")
             
             if server_ip:
                 ps_cmd = f"""
                 # Allow inbound TCP from Management Server only
                 New-NetFirewallRule -DisplayName "Manager_Isolation_Allow_In_Server_TCP" -Direction Inbound -Action Allow -Protocol TCP -RemoteAddress "{server_ip}" -ErrorAction SilentlyContinue | Out-Null
+
+                # Allow outbound TCP to Management Server port for agent polling/heartbeat
+                New-NetFirewallRule -DisplayName "Manager_Isolation_Allow_Out_Server_TCP" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "{server_ip}" -RemotePort {server_port} -ErrorAction SilentlyContinue | Out-Null
                 
-                Write-Host "Management server rules created for {server_ip}"
+                Write-Host "Management server rules created for {server_ip}:{server_port}"
                 """
                 result = subprocess.run(['powershell', '-Command', ps_cmd], capture_output=True, text=True)
                 self.logger.info(f"  ✓ Created Allow rules for server {server_ip}: {result.returncode}")
@@ -416,7 +421,7 @@ class SecurityAgentClient:
             self.logger.critical(f"  ✓ Machine CANNOT connect to any other hosts")
             self.logger.critical(f"  ✓ Other machines CANNOT ping this machine (ICMP BLOCKED)")
             self.logger.critical(f"  ✓ ICMP Echo Request rules disabled (4 rules)")
-            self.logger.critical(f"  ✓ Only inbound TCP connections from {server_desc} allowed")
+            self.logger.critical(f"  ✓ Only TCP with {server_desc}:{server_port} is allowed for control channel")
             self.logger.critical(f"  ✓ Firewall policy: Block Inbound, Block Outbound (except allowed rules)")
             return True
             
